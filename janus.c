@@ -2691,7 +2691,9 @@ gint main(int argc, char *argv[])
 	signal(SIGINT, janus_handle_signal);
 
 	/* Setup Glib */
+#if !GLIB_CHECK_VERSION(2, 36, 0)
 	g_type_init();
+#endif
 	
 	/* Logging level: default is info */
 	log_level = LOG_INFO;
