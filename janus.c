@@ -2320,7 +2320,13 @@ void janus_pluginso_close(gpointer key, gpointer value, gpointer user_data) {
 	void *plugin = (janus_plugin *)value;
 	if(!plugin)
 		return;
-	//~ dlclose(plugin);
+
+	/* Only dlclose() the plugin if debug is disabled, otherwise we lose
+	 * debug symbols for the library. See:
+	 * https://bugs.kde.org/show_bug.cgi?id=79362 */
+	if (log_level <= LOG_WARN) {
+		dlclose(plugin);
+	}
 }
 
 janus_plugin *janus_plugin_find(const gchar *package) {
