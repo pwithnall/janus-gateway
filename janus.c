@@ -732,6 +732,7 @@ done:
 
 int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 	janus_session *session = NULL;
+	janus_ice_handle *handle = NULL;
 
 	int ret = MHD_NO;
 	if(source == NULL || root == NULL) {
@@ -874,7 +875,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 		ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_SESSION_NOT_FOUND, "No such session %"SCNu64"", session_id);
 		goto jsondone;
 	}
-	janus_ice_handle *handle = NULL;
+
 	if(handle_id > 0) {
 		handle = janus_ice_handle_find(session, handle_id);
 		if(!handle) {
@@ -1366,6 +1367,9 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 	goto jsondone;
 
 jsondone:
+	if (handle != NULL) {
+		janus_ice_handle_unref(handle);
+	}
 	if (session != NULL) {
 		janus_session_unref(session);
 	}
@@ -1592,6 +1596,7 @@ done:
 
 int janus_process_incoming_admin_request(janus_request_source *source, json_t *root) {
 	janus_session *session = NULL;
+	janus_ice_handle *handle = NULL;
 
 	int ret = MHD_NO;
 	if(source == NULL || root == NULL) {
@@ -1709,7 +1714,7 @@ int janus_process_incoming_admin_request(janus_request_source *source, json_t *r
 		ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_SESSION_NOT_FOUND, "No such session %"SCNu64"", session_id);
 		goto jsondone;
 	}
-	janus_ice_handle *handle = NULL;
+
 	if(handle_id > 0) {
 		handle = janus_ice_handle_find(session, handle_id);
 		if(!handle) {
@@ -1827,6 +1832,9 @@ int janus_process_incoming_admin_request(janus_request_source *source, json_t *r
 	}
 
 jsondone:
+	if (handle != NULL) {
+		janus_ice_handle_unref(handle);
+	}
 	if (session != NULL) {
 		janus_session_unref(session);
 	}

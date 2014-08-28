@@ -81,6 +81,8 @@ typedef struct janus_ice_component janus_ice_component;
 
 /*! \brief Janus ICE handle */
 struct janus_ice_handle {
+	/*! \brief Reference count */
+	volatile gint ref_count;
 	/*! \brief Opaque pointer to the gateway/peer session */
 	void *session;
 	/*! \brief Handle identifier, guaranteed to be non-zero */
@@ -218,9 +220,14 @@ gint janus_ice_handle_attach_plugin(void *gateway_session, guint64 handle_id, ja
  * @param[in] handle_id The Janus ICE handle ID to destroy
  * @returns 0 in case of success, a negative integer otherwise */
 gint janus_ice_handle_destroy(void *gateway_session, guint64 handle_id);
-/*! \brief Method to actually free the resources allocated by a Janus ICE handle
- * @param[in] handle The Janus ICE handle instance to free */
-void janus_ice_free(janus_ice_handle *handle);
+/*! \brief Method to increment the reference count of a Janus ICE handle
+ * @param[in] handle The Janus ICE handle instance to reference
+ * @returns The same handle, for convenience */
+janus_ice_handle *janus_ice_handle_ref(janus_ice_handle *handle);
+/*! \brief Method to decrement the reference count of a Janus ICE handle
+ * If the count reaches zero, the handle is freed.
+ * @param[in] handle The Janus ICE handle instance to unreference */
+void janus_ice_handle_unref(janus_ice_handle *handle);
 /*! \brief Method to only hangup (e.g., DTLS alert) the WebRTC PeerConnection allocated by a Janus ICE handle
  * @param[in] handle The Janus ICE handle instance managing the WebRTC PeerConnection to hangup */
 void janus_ice_webrtc_hangup(janus_ice_handle *handle);

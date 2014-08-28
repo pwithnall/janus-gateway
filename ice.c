@@ -13,7 +13,8 @@
  * \ingroup protocols
  * \ref protocols
  */
- 
+
+#include <assert.h>
 #include <ifaddrs.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -235,25 +236,34 @@ janus_ice_handle *janus_ice_handle_create(void *gateway_session) {
 	handle->handle_id = handle_id;
 	handle->app = NULL;
 	handle->app_handle = NULL;
+	handle->ref_count = 1;
 	janus_mutex_init(&handle->mutex);
 
 	/* Set up other stuff. */
 	janus_mutex_lock(&session->mutex);
 	if(session->ice_handles == NULL)
-		session->ice_handles = g_hash_table_new(NULL, NULL);
+		session->ice_handles = g_hash_table_new_full(NULL, NULL, NULL,
+		                                             (GDestroyNotify) janus_ice_handle_unref);
 	g_hash_table_insert(session->ice_handles, GUINT_TO_POINTER(handle_id), handle);
 	janus_mutex_unlock(&session->mutex);
 
 	return handle;
 }
 
+/* Returns a new reference to the ICE handle, or NULL. */
 janus_ice_handle *janus_ice_handle_find(void *gateway_session, guint64 handle_id) {
 	if(gateway_session == NULL)
 		return NULL;
+
 	janus_session *session = (janus_session *)gateway_session;
+
 	janus_mutex_lock(&session->mutex);
 	janus_ice_handle *handle = session->ice_handles ? g_hash_table_lookup(session->ice_handles, GUINT_TO_POINTER(handle_id)) : NULL;
+	if (handle != NULL) {
+		janus_ice_handle_ref(handle);
+	}
 	janus_mutex_unlock(&session->mutex);
+
 	return handle;
 }
 
@@ -284,6 +294,8 @@ gint janus_ice_handle_attach_plugin(void *gateway_session, guint64 handle_id, ja
 	if(handle->app != NULL) {
 		/* This handle is already attached to a plugin */
 		janus_mutex_unlock(&session->mutex);
+		janus_ice_handle_unref(handle);
+
 		return JANUS_ERROR_PLUGIN_ATTACH;
 	}
 	int error = 0;
@@ -291,6 +303,8 @@ gint janus_ice_handle_attach_plugin(void *gateway_session, guint64 handle_id, ja
 	if(session_handle == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		janus_mutex_unlock(&session->mutex);
+		janus_ice_handle_unref(handle);
+
 		return JANUS_ERROR_UNKNOWN;	/* FIXME Do we need something like "Internal Server Error"? */
 	}
 	session_handle->gateway_handle = handle;
@@ -300,11 +314,15 @@ gint janus_ice_handle_attach_plugin(void *gateway_session, guint64 handle_id, ja
 	if(error) {
 		/* TODO Make error struct to pass verbose information */
 		janus_mutex_unlock(&session->mutex);
+		janus_ice_handle_unref(handle);
+
 		return error;
 	}
 	handle->app = plugin;
 	handle->app_handle = session_handle;
 	janus_mutex_unlock(&session->mutex);
+	janus_ice_handle_unref(handle);
+
 	return 0;
 }
 
@@ -324,6 +342,8 @@ gint janus_ice_handle_destroy(void *gateway_session, guint64 handle_id) {
 	if(plugin_t == NULL) {
 		/* There was no plugin attached, probably something went wrong there */
 		janus_mutex_unlock(&session->mutex);
+		janus_ice_handle_unref(handle);
+
 		return 0;
 	}
 	JANUS_LOG(LOG_INFO, "Detaching handle from %s\n", plugin_t->get_name());
@@ -350,29 +370,52 @@ gint janus_ice_handle_destroy(void *gateway_session, guint64 handle_id) {
 		g_async_queue_push(session->messages, notification);
 	}
 	janus_mutex_unlock(&session->mutex);
+	janus_ice_handle_unref(handle);
+
 	/* We only actually destroy the handle later */
 	JANUS_LOG(LOG_INFO, "Handle detached (%d), scheduling destruction\n", error);
+
 	return error;
 }
 
-void janus_ice_free(janus_ice_handle *handle) {
-	if(handle == NULL)
-		return;
-	janus_mutex_lock(&handle->mutex);
-	handle->session = NULL;
-	handle->app = NULL;
-	if(handle->app_handle != NULL) {
-		handle->app_handle->stopped = 1;
-		handle->app_handle->gateway_handle = NULL;
-		handle->app_handle->plugin_handle = NULL;
-		g_free(handle->app_handle);
-		handle->app_handle = NULL;
+janus_ice_handle *janus_ice_handle_ref(janus_ice_handle *handle) {
+	assert(handle != NULL);
+	assert(handle->ref_count > 0);
+
+	g_atomic_int_inc(&handle->ref_count);
+
+	return handle;
+}
+
+void janus_ice_handle_unref(janus_ice_handle *handle) {
+	assert(handle != NULL);
+	assert(handle->ref_count > 0);
+
+	if (g_atomic_int_dec_and_test(&handle->ref_count)) {
+		/* Free the handle. */
+		janus_mutex_lock(&handle->mutex);
+
+		handle->session = NULL;
+		handle->app = NULL;
+
+		if(handle->app_handle != NULL) {
+			handle->app_handle->stopped = 1;
+			handle->app_handle->gateway_handle = NULL;
+			handle->app_handle->plugin_handle = NULL;
+			g_free(handle->app_handle);
+			handle->app_handle = NULL;
+		}
+
+		janus_mutex_unlock(&handle->mutex);
+
+		janus_ice_webrtc_free(handle);
+
+		JANUS_LOG(LOG_INFO,
+		          "[%"SCNu64"] Handle and related resources freed\n",
+		          handle->handle_id);
+
+		free(handle);
 	}
-	janus_mutex_unlock(&handle->mutex);
-	janus_ice_webrtc_free(handle);
-	JANUS_LOG(LOG_INFO, "[%"SCNu64"] Handle and related resources freed\n", handle->handle_id);
-	g_free(handle);
-	handle = NULL;
 }
 
 void janus_ice_webrtc_hangup(janus_ice_handle *handle) {
@@ -792,7 +835,7 @@ void *janus_ice_thread(void *data) {
 	/* This handle has been destroyed, wait a bit and then free all the resources */
 	g_usleep (1*G_USEC_PER_SEC);
 	if(janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP)) {
-		janus_ice_free(handle);
+		janus_ice_handle_unref(handle);
 	} else {
 		janus_ice_webrtc_free(handle);
 	}
