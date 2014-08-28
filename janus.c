@@ -997,10 +997,15 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_REQUEST_PATH, "Unhandled request '%s' at this path", message_text);
 			goto jsondone;
 		}
+
+		janus_mutex_lock(&handle->mutex);
 		if(handle->app == NULL || handle->app_handle == NULL) {
+			janus_mutex_unlock(&handle->mutex);
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_PLUGIN_DETACH, "No plugin to detach from");
 			goto jsondone;
 		}
+		janus_mutex_unlock(&handle->mutex);
+
 		int error = janus_ice_handle_destroy(session, handle_id);
 		janus_mutex_lock(&session->mutex);
 		g_hash_table_remove(session->ice_handles, GUINT_TO_POINTER(handle_id));
@@ -1028,20 +1033,23 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_REQUEST_PATH, "Unhandled request '%s' at this path", message_text);
 			goto jsondone;
 		}
+
+		janus_mutex_lock(&handle->mutex);
 		if(handle->app == NULL || handle->app_handle == NULL) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_PLUGIN_MESSAGE, "No plugin to handle this message");
-			goto jsondone;
+			goto jsondone_message;
 		}
+
 		janus_plugin *plugin_t = (janus_plugin *)handle->app;
 		JANUS_LOG(LOG_INFO, "[%"SCNu64"] There's a message for %s\n", handle->handle_id, plugin_t->get_name());
 		json_t *body = json_object_get(root, "body");
 		if(body == NULL) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_JSON, "Missing mandatory element (body)");
-			goto jsondone;
+			goto jsondone_message;
 		}
 		if(!json_is_object(body)) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_JSON_OBJECT, "Invalid body object");
-			goto jsondone;
+			goto jsondone_message;
 		}
 		/* Is there an SDP attached? */
 		json_t *jsep = json_object_get(root, "jsep");
@@ -1050,22 +1058,22 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 		if(jsep != NULL) {
 			if(!json_is_object(jsep)) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_JSON_OBJECT, "Invalid jsep object");
-				goto jsondone;
+				goto jsondone_message;
 			}
 			json_t *type = json_object_get(jsep, "type");
 			if(!type) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_MISSING_MANDATORY_ELEMENT, "JSEP error: missing mandatory element (type)");
-				goto jsondone;
+				goto jsondone_message;
 			}
 			if(!json_is_string(type)) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_ELEMENT_TYPE, "JSEP error: invalid element type (type should be a string)");
-				goto jsondone;
+				goto jsondone_message;
 			}
 			jsep_type = g_strdup(json_string_value(type));
 			if(jsep_type == NULL) {
 				JANUS_LOG(LOG_FATAL, "Memory error!\n");
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_UNKNOWN, "Memory error");
-				goto jsondone;
+				goto jsondone_message;
 			}
 			type = NULL;
 			/* Check the JSEP type */
@@ -1080,20 +1088,20 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_JSEP_UNKNOWN_TYPE, "JSEP error: unknown message type '%s'", jsep_type);
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				goto jsondone;
+				goto jsondone_message;
 			}
 			json_t *sdp = json_object_get(jsep, "sdp");
 			if(!sdp) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_MISSING_MANDATORY_ELEMENT, "JSEP error: missing mandatory element (sdp)");
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				goto jsondone;
+				goto jsondone_message;
 			}
 			if(!json_is_string(sdp)) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_ELEMENT_TYPE, "JSEP error: invalid element type (sdp should be a string)");
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				goto jsondone;
+				goto jsondone_message;
 			}
 			jsep_sdp = (char *)json_string_value(sdp);
 			JANUS_LOG(LOG_VERB, "[%"SCNu64"] Remote SDP:\n%s", handle->handle_id, jsep_sdp);
@@ -1105,7 +1113,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_JSEP_INVALID_SDP, "JSEP error: invalid SDP");
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				goto jsondone;
+				goto jsondone_message;
 			}
 			/* FIXME We're only handling single audio/video lines for now... */
 			JANUS_LOG(LOG_VERB, "[%"SCNu64"] Audio %s been negotiated\n", handle->handle_id, audio ? "has" : "has NOT");
@@ -1239,7 +1247,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_JSEP_INVALID_SDP, "JSEP error: invalid SDP");
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				goto jsondone;
+				goto jsondone_message;
 			}
 			sdp = NULL;
 			janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
@@ -1257,45 +1265,52 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 		plugin_t->handle_message(handle->app_handle, g_strdup((char *)transaction_text), body_text, jsep_type, jsep_sdp_stripped);
 		/* Send the success reply */
 		ret = janus_process_success(source, "application/json", reply_text);
+
+		goto jsondone;
+
+jsondone_message:
+		janus_mutex_unlock(&handle->mutex);
+		goto jsondone;
 	} else if(!strcasecmp(message_text, "trickle")) {
 		if(handle == NULL) {
 			/* Trickle is an handle-level command */
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_REQUEST_PATH, "Unhandled request '%s' at this path", message_text);
 			goto jsondone;
 		}
+
+		janus_mutex_lock(&handle->mutex);
+
 		if(handle->app == NULL || handle->app_handle == NULL) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_PLUGIN_MESSAGE, "No plugin to handle this trickle candidate");
-			goto jsondone;
+			goto jsondone_trickle;
 		}
 		json_t *candidate = json_object_get(root, "candidate");
 		if(candidate == NULL) {
 			ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_JSON, "Missing mandatory element (candidate)");
-			goto jsondone;
+			goto jsondone_trickle;
 		}
 		if(!json_is_object(candidate)) {
 			JANUS_LOG(LOG_INFO, "No more remote candidates for handle %"SCNu64"!\n", handle->handle_id);
-			janus_mutex_lock(&handle->mutex);
 			janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALL_TRICKLES);
-			janus_mutex_unlock(&handle->mutex);
 		} else {
 			/* Handle remote candidate */
 			json_t *mid = json_object_get(candidate, "sdpMid");
 			if(!mid) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_MISSING_MANDATORY_ELEMENT, "Trickle error: missing mandatory element (sdpMid)");
-				goto jsondone;
+				goto jsondone_trickle;
 			}
 			if(!json_is_string(mid)) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_ELEMENT_TYPE, "Trickle error: invalid element type (sdpMid should be a string)");
-				goto jsondone;
+				goto jsondone_trickle;
 			}
 			json_t *rc = json_object_get(candidate, "candidate");
 			if(!rc) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_MISSING_MANDATORY_ELEMENT, "Trickle error: missing mandatory element (candidate)");
-				goto jsondone;
+				goto jsondone_trickle;
 			}
 			if(!json_is_string(rc)) {
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_INVALID_ELEMENT_TYPE, "Trickle error: invalid element type (candidate should be a string)");
-				goto jsondone;
+				goto jsondone_trickle;
 			}
 			JANUS_LOG(LOG_VERB, "[%"SCNu64"] Trickle candidate (%s): %s\n", handle->handle_id, json_string_value(mid), json_string_value(rc));
 			/* Is there any stream ready? this trickle may get here before the SDP it relates to */
@@ -1343,7 +1358,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 				janus_ice_stream *stream = video ? handle->video_stream : (data ? handle->data_stream : handle->audio_stream);
 				if(stream == NULL) {
 					ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_TRICKE_INVALID_STREAM, "Trickle error: no %s stream", json_string_value(mid));
-					goto jsondone;
+					goto jsondone_trickle;
 				}
 				int res = janus_sdp_parse_candidate(stream, json_string_value(rc), 1);
 				if(res != 0) {
@@ -1361,6 +1376,10 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 		json_decref(reply);
 		/* Send the success reply */
 		ret = janus_process_success(source, "application/json", reply_text);
+
+jsondone_trickle:
+		janus_mutex_unlock(&handle->mutex);
+		goto jsondone;
 	} else {
 		ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_UNKNOWN_REQUEST, "Unknown request '%s'", message_text);
 	}
@@ -1747,7 +1766,9 @@ int janus_process_incoming_admin_request(janus_request_source *source, json_t *r
 				continue;
 			}
 
+			janus_mutex_lock(&handle->mutex);
 			json_array_append_new(list, json_integer(handle->handle_id));
+			janus_mutex_unlock(&handle->mutex);
 		}
 
 		janus_mutex_unlock(&session->mutex);
@@ -2405,26 +2426,41 @@ janus_plugin *janus_plugin_find(const gchar *package) {
 
 /* Plugin callback interface */
 int janus_push_event(janus_plugin_session *handle, janus_plugin *plugin, const char *transaction, const char *message, const char *sdp_type, const char *sdp) {
+	int retval = JANUS_OK;
+
 	if(!plugin || !message)
 		return -1;
 	if(!handle || handle->stopped)
 		return -2;
 	janus_ice_handle *ice_handle = (janus_ice_handle *)handle->gateway_handle;
-	if(!ice_handle || janus_flags_is_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP))
+	if(!ice_handle)
 		return JANUS_ERROR_SESSION_NOT_FOUND;
+
+	janus_mutex_lock(&ice_handle->mutex);
+
+	if (janus_flags_is_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP)) {
+		retval = JANUS_ERROR_SESSION_NOT_FOUND;
+		goto done;
+	}
+
 	janus_session *session = ice_handle->session;
-	if(!session || session->destroy)
-		return JANUS_ERROR_SESSION_NOT_FOUND;
+	if(!session || session->destroy) {
+		retval = JANUS_ERROR_SESSION_NOT_FOUND;
+		goto done;
+	}
+
 	/* Make sure this is JSON */
 	json_error_t error;
 	json_t *event = json_loads(message, 0, &error);
 	if(!event) {
 		JANUS_LOG(LOG_ERR, "[%"SCNu64"] Cannot push event (JSON error: on line %d: %s)\n", ice_handle->handle_id, error.line, error.text);
-		return JANUS_ERROR_INVALID_JSON;
+		retval = JANUS_ERROR_INVALID_JSON;
+		goto done;
 	}
 	if(!json_is_object(event)) {
 		JANUS_LOG(LOG_ERR, "[%"SCNu64"] Cannot push event (JSON error: not an object)\n", ice_handle->handle_id);
-		return JANUS_ERROR_INVALID_JSON_OBJECT;
+		retval = JANUS_ERROR_INVALID_JSON_OBJECT;
+		goto done;
 	}
 	/* Attach JSEP if possible? */
 	json_t *jsep = NULL;
@@ -2432,7 +2468,8 @@ int janus_push_event(janus_plugin_session *handle, janus_plugin *plugin, const c
 		jsep = janus_handle_sdp(handle, plugin, sdp_type, sdp);
 		if(jsep == NULL) {
 			JANUS_LOG(LOG_ERR, "[%"SCNu64"] Cannot push event (JSON error: problem with the SDP)\n", ice_handle->handle_id);
-			return JANUS_ERROR_JSEP_INVALID_SDP;
+			retval = JANUS_ERROR_JSEP_INVALID_SDP;
+			goto done;
 		}
 	}
 	/* Prepare JSON event */
@@ -2460,7 +2497,8 @@ int janus_push_event(janus_plugin_session *handle, janus_plugin *plugin, const c
 	janus_http_event *notification = (janus_http_event *)calloc(1, sizeof(janus_http_event));
 	if(notification == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
-		return JANUS_ERROR_UNKNOWN;	/* FIXME Do we need something like "Internal Server Error"? */
+		retval = JANUS_ERROR_UNKNOWN;	/* FIXME Do we need something like "Internal Server Error"? */
+		goto done;
 	}
 	notification->code = 200;
 	notification->payload = reply_text;
@@ -2468,7 +2506,10 @@ int janus_push_event(janus_plugin_session *handle, janus_plugin *plugin, const c
 
 	g_async_queue_push(session->messages, notification);
 
-	return JANUS_OK;
+done:
+	janus_mutex_unlock(&ice_handle->mutex);
+
+	return retval;
 }
 
 json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, const char *sdp_type, const char *sdp) {
@@ -2493,11 +2534,15 @@ json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, con
 		JANUS_LOG(LOG_ERR, "Invalid ICE handle\n");
 		return NULL;
 	}
+
+	janus_mutex_lock(&ice_handle->mutex);
+
 	/* Is this valid SDP? */
 	int audio = 0, video = 0, data = 0, bundle = 0, rtcpmux = 0, trickle = 0;
 	janus_sdp *parsed_sdp = janus_sdp_preparse(sdp, &audio, &video, &data, &bundle, &rtcpmux, &trickle);
 	if(parsed_sdp == NULL) {
 		JANUS_LOG(LOG_ERR, "[%"SCNu64"] Couldn't parse SDP...\n", ice_handle->handle_id);
+		janus_mutex_unlock(&ice_handle->mutex);
 		return NULL;
 	}
 	janus_sdp_free(parsed_sdp);
@@ -2536,6 +2581,7 @@ json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, con
 			g_usleep(100000);
 			if(ice_handle->cdone < 0) {
 				JANUS_LOG(LOG_ERR, "[%"SCNu64"] Error gathering candidates!\n", ice_handle->handle_id);
+				janus_mutex_unlock(&ice_handle->mutex);
 				return NULL;
 			}
 		}
@@ -2545,6 +2591,7 @@ json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, con
 	if(sdp_stripped == NULL) {
 		/* Invalid SDP */
 		JANUS_LOG(LOG_ERR, "Invalid SDP\n");
+		janus_mutex_unlock(&ice_handle->mutex);
 		return NULL;
 	}
 	/* Add our details */
@@ -2553,6 +2600,7 @@ json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, con
 		/* Couldn't merge SDP */
 		JANUS_LOG(LOG_ERR, "Error merging SDP\n");
 		g_free(sdp_stripped);
+		janus_mutex_unlock(&ice_handle->mutex);
 		return NULL;
 	}
 
@@ -2644,6 +2692,9 @@ json_t *janus_handle_sdp(janus_plugin_session *handle, janus_plugin *plugin, con
 	g_free(sdp_stripped);
 	//~ g_free(sdp_merged);
 	ice_handle->local_sdp = sdp_merged;
+
+	janus_mutex_unlock(&ice_handle->mutex);
+
 	return jsep;
 }
 
@@ -2651,34 +2702,70 @@ void janus_relay_rtp(janus_plugin_session *handle, int video, char *buf, int len
 	if(!handle || handle->stopped || buf == NULL || len < 1)
 		return;
 	janus_ice_handle *session = (janus_ice_handle *)handle->gateway_handle;
-	if(!session || janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP)
-			|| janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT))
+
+	if (session == NULL) {
 		return;
+	}
+
+	janus_mutex_lock(&session->mutex);
+
+	if(janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP) ||
+	   janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT)) {
+		janus_mutex_unlock(&session->mutex);
+		return;
+	}
+
 	janus_ice_relay_rtp(session, video, buf, len);
+
+	janus_mutex_unlock(&session->mutex);
 }
 
 void janus_relay_rtcp(janus_plugin_session *handle, int video, char *buf, int len) {
 	if(!handle || handle->stopped || buf == NULL || len < 1)
 		return;
 	janus_ice_handle *session = (janus_ice_handle *)handle->gateway_handle;
-	if(!session || janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP)
-			|| janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT))
+
+	if (session == NULL) {
 		return;
+	}
+
+	janus_mutex_lock(&session->mutex);
+
+	if(janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP) ||
+	   janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT)) {
+		janus_mutex_unlock(&session->mutex);
+		return;
+	}
+
 	janus_ice_relay_rtcp(session, video, buf, len);
+
+	janus_mutex_unlock(&session->mutex);
 }
 
 void janus_relay_data(janus_plugin_session *handle, char *buf, int len) {
 	if(!handle || handle->stopped || buf == NULL || len < 1)
 		return;
 	janus_ice_handle *session = (janus_ice_handle *)handle->gateway_handle;
-	if(!session || janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP)
-			|| janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT))
+
+	if (session == NULL) {
 		return;
+	}
+
+	janus_mutex_lock(&session->mutex);
+
+	if(janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP) ||
+	   janus_flags_is_set(&session->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT)) {
+		janus_mutex_unlock(&session->mutex);
+		return;
+	}
+
 #ifdef HAVE_SCTP
 	janus_ice_relay_data(session, buf, len);
 #else
 	JANUS_LOG(LOG_WARN, "Asked to relay data, but Data Channels support has not been compiled...\n");
 #endif
+
+	janus_mutex_unlock(&session->mutex);
 }
 
 void janus_close_pc(janus_plugin_session *handle) {
@@ -2688,10 +2775,15 @@ void janus_close_pc(janus_plugin_session *handle) {
 	janus_ice_handle *ice_handle = (janus_ice_handle *)handle->gateway_handle;
 	if(!ice_handle)
 		return;
+
+	janus_mutex_lock(&ice_handle->mutex);
+
 	janus_session *session = (janus_session *)ice_handle->session;
-	if(!session)
+	if (session == NULL) {
+		janus_mutex_unlock(&ice_handle->mutex);
 		return;
-		
+	}
+
 	/* Send an alert on all the DTLS connections */
 	janus_ice_webrtc_hangup(ice_handle);
 	/* Get rid of the PeerConnection */
@@ -2710,6 +2802,7 @@ void janus_close_pc(janus_plugin_session *handle) {
 	janus_http_event *notification = (janus_http_event *)calloc(1, sizeof(janus_http_event));
 	if(notification == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
+		janus_mutex_unlock(&ice_handle->mutex);
 		return;
 	}
 	notification->code = 200;
@@ -2722,6 +2815,8 @@ void janus_close_pc(janus_plugin_session *handle) {
 	janus_plugin *plugin = (janus_plugin *)ice_handle->app;
 	if(plugin && plugin->hangup_media)
 		plugin->hangup_media(handle);
+
+	janus_mutex_unlock(&ice_handle->mutex);
 }
 
 void janus_end_session(janus_plugin_session *handle) {
