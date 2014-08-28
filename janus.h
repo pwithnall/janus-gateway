@@ -70,6 +70,8 @@ void janus_http_event_free(janus_http_event *event);
 
 /*! \brief Gateway-Client session */
 typedef struct janus_session {
+	/*! \brief Reference count */
+	volatile gint ref_count;
 	/*! \brief Janus Gateway-Client session ID */
 	guint64 session_id;
 	/*! \brief Map of handles this session is managing */
@@ -116,15 +118,20 @@ janus_session *janus_session_create(guint64 session_id);
 gboolean janus_session_exists(guint64 session_id);
 /*! \brief Method to find an existing Janus Gateway-Client session from its ID
  * @param[in] session_id The Janus Gateway-Client session ID
- * @returns The created Janus Gateway-Client session if successful, NULL otherwise */
+ * @returns A new reference to the created Janus Gateway-Client session if successful, NULL otherwise */
 janus_session *janus_session_find(guint64 session_id);
+/*! \brief Method to increment the reference count of a Janus Gateway-Client session
+ * @param[in] session The Janus Gateway-Client session instance to reference
+ * @returns The same session, for convenience */
+janus_session *janus_session_ref(janus_session *session);
+/*! \brief Method to decrement the reference count of a Janus Gateway-Client session
+ * If the count reaches zero, the session is freed.
+ * @param[in] session The Janus Gateway-Client session instance to unreference */
+void janus_session_unref(janus_session *session);
 /*! \brief Method to destroy a Janus Gateway-Client session
  * @param[in] session_id The Janus Gateway-Client session ID to destroy
  * @returns 0 in case of success, a negative integer otherwise */
 gint janus_session_destroy(guint64 session_id);
-/*! \brief Method to actually free the resources allocated by a Janus Gateway-Client session
- * @param[in] session The Janus Gateway-Client session instance to free */
-void janus_session_free(janus_session *session);
 ///@}
 
 

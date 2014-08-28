@@ -12,7 +12,8 @@
  * \ingroup core
  * \ref core
  */
- 
+
+#include <assert.h>
 #include <dlfcn.h>
 #include <dirent.h>
 #include <ifaddrs.h>
@@ -263,6 +264,7 @@ janus_session *janus_session_create(guint64 session_id) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		return NULL;
 	}
+	session->ref_count = 1;
 	session->session_id = session_id;
 	session->messages = g_async_queue_new_full((GDestroyNotify) janus_http_event_free);
 	session->destroy = 0;
@@ -274,6 +276,39 @@ janus_session *janus_session_create(guint64 session_id) {
 	return session;
 }
 
+janus_session *janus_session_ref(janus_session *session) {
+	assert(session != NULL);
+	assert(session->ref_count > 0);
+
+	g_atomic_int_inc(&session->ref_count);
+
+	return session;
+}
+
+void janus_session_unref(janus_session *session) {
+	assert(session != NULL);
+	assert(session->ref_count > 0);
+
+	if (g_atomic_int_dec_and_test(&session->ref_count)) {
+		/* Free the session. */
+		janus_mutex_lock(&session->mutex);
+
+		if(session->ice_handles != NULL) {
+			g_hash_table_destroy(session->ice_handles);
+			session->ice_handles = NULL;
+		}
+
+		if(session->messages != NULL) {
+			g_async_queue_unref (session->messages);
+			session->messages = NULL;
+		}
+
+		janus_mutex_unlock(&session->mutex);
+
+		free(session);
+	}
+}
+
 gboolean janus_session_exists(guint64 session_id) {
 	janus_mutex_lock(&sessions_mutex);
 	janus_session *session = g_hash_table_lookup(sessions, GUINT_TO_POINTER(session_id));
@@ -281,9 +316,13 @@ gboolean janus_session_exists(guint64 session_id) {
 	return (session != NULL);
 }
 
+/* Returns a reference to the session, or NULL if the session ID was unknown. */
 janus_session *janus_session_find(guint64 session_id) {
 	janus_mutex_lock(&sessions_mutex);
 	janus_session *session = g_hash_table_lookup(sessions, GUINT_TO_POINTER(session_id));
+	if (session != NULL) {
+		janus_session_ref(session);
+	}
 	janus_mutex_unlock(&sessions_mutex);
 	return session;
 }
@@ -314,25 +353,12 @@ gint janus_session_destroy(guint64 session_id) {
 	}
 
 	/* TODO Actually destroy session */
+
+	janus_mutex_unlock(&session->mutex);
+	janus_session_unref(session);
+
 	return 0;
 }
-
-void janus_session_free(janus_session *session) {
-	if(session == NULL)
-		return;
-	janus_mutex_lock(&session->mutex);
-	if(session->ice_handles != NULL) {
-		g_hash_table_destroy(session->ice_handles);
-		session->ice_handles = NULL;
-	}
-	if(session->messages != NULL) {
-		g_async_queue_unref (session->messages);
-		session->messages = NULL;
-	}
-	janus_mutex_unlock(&session->mutex);
-	session = NULL;
-}
-
 
 /* Connection notifiers */
 int janus_ws_client_connect(void *cls, const struct sockaddr *addr, socklen_t addrlen) {
@@ -592,6 +618,7 @@ int janus_ws_handler(void *cls, struct MHD_Connection *connection, const char *u
 					MHD_add_response_header(response, "Access-Control-Allow-Headers", msg->acrh);
 				ret = MHD_queue_response(connection, MHD_HTTP_FORBIDDEN, response);
 				MHD_destroy_response(response);
+				janus_session_unref(session);
 				goto done;
 			}
 		}
@@ -652,6 +679,9 @@ int janus_ws_handler(void *cls, struct MHD_Connection *connection, const char *u
 			/* Still no message, wait */
 			ret = janus_ws_notifier(&source, max_events);
 		}
+
+		janus_session_unref(session);
+
 		goto done;
 	}
 	
@@ -685,6 +715,8 @@ done:
 }
 
 int janus_process_incoming_request(janus_request_source *source, json_t *root) {
+	janus_session *session = NULL;
+
 	int ret = MHD_NO;
 	if(source == NULL || root == NULL) {
 		JANUS_LOG(LOG_ERR, "Missing source or payload to process, giving up...\n");
@@ -820,7 +852,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 	}
 
 	/* If we got here, make sure we have a session (and/or a handle) */
-	janus_session *session = janus_session_find(session_id);
+	session = janus_session_find(session_id);
 	if(!session) {
 		JANUS_LOG(LOG_ERR, "Couldn't find any session %"SCNu64"...\n", session_id);
 		ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_SESSION_NOT_FOUND, "No such session %"SCNu64"", session_id);
@@ -1315,6 +1347,10 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 	goto jsondone;
 
 jsondone:
+	if (session != NULL) {
+		janus_session_unref(session);
+	}
+
 	json_decref(root);
 	
 	return ret;
@@ -1536,6 +1572,8 @@ done:
 }
 
 int janus_process_incoming_admin_request(janus_request_source *source, json_t *root) {
+	janus_session *session = NULL;
+
 	int ret = MHD_NO;
 	if(source == NULL || root == NULL) {
 		JANUS_LOG(LOG_ERR, "Missing source or payload to process, giving up...\n");
@@ -1646,7 +1684,7 @@ int janus_process_incoming_admin_request(janus_request_source *source, json_t *r
 	}
 
 	/* If we got here, make sure we have a session (and/or a handle) */
-	janus_session *session = janus_session_find(session_id);
+	session = janus_session_find(session_id);
 	if(!session) {
 		JANUS_LOG(LOG_ERR, "Couldn't find any session %"SCNu64"...\n", session_id);
 		ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_SESSION_NOT_FOUND, "No such session %"SCNu64"", session_id);
@@ -1770,6 +1808,10 @@ int janus_process_incoming_admin_request(janus_request_source *source, json_t *r
 	}
 
 jsondone:
+	if (session != NULL) {
+		janus_session_unref(session);
+	}
+
 	json_decref(root);
 	
 	return ret;
@@ -1886,6 +1928,9 @@ int janus_ws_notifier(janus_request_source *source, int max_events) {
 		g_usleep(100000);
 		end = janus_get_monotonic_time();
 	}
+
+	janus_session_unref(session);
+
 	if(!found) {
 		JANUS_LOG(LOG_VERB, "Long poll time out for session %"SCNu64"...\n", session_id);
 		event = (janus_http_event *)calloc(1, sizeof(janus_http_event));
@@ -3198,7 +3243,8 @@ gint main(int argc, char *argv[])
 	json_decref(info);
 
 	/* Start web server, if enabled */
-	sessions = g_hash_table_new(NULL, NULL);
+	sessions = g_hash_table_new_full(NULL, NULL, NULL,
+	                                 (GDestroyNotify) janus_session_unref);
 	janus_mutex_init(&sessions_mutex);
 	gint64 threads = 0;
 	item = janus_config_get_item_drilldown(config, "webserver", "threads");
