@@ -201,6 +201,11 @@ janus_ice_handle *janus_ice_handle_create(void *gateway_session);
  * @param[in] handle_id The Janus ICE handle ID
  * @returns The created Janus ICE handle if successful, NULL otherwise */
 janus_ice_handle *janus_ice_handle_find(void *gateway_session, guint64 handle_id);
+/*! \brief Method to determine whether a handle ID is currently in use.
+ * @param[in] gateway_session The gateway/peer session this ICE handle belongs to
+ * @param[in] handle_id The Janus ICE handle ID
+ * @returns Whether the ID is bound to a handle */
+gboolean janus_ice_handle_exists (void *gateway_session, guint64 handle_id);
 /*! \brief Method to attach a Janus ICE handle to a plugin
  * \details This method is very important, as it allows plugins to send/receive media (RTP/RTCP) to/from a WebRTC peer.
  * @param[in] gateway_session The gateway/peer session this ICE handle belongs to

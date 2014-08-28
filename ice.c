@@ -220,7 +220,7 @@ janus_ice_handle *janus_ice_handle_create(void *gateway_session) {
 	guint64 handle_id = 0;
 	while(handle_id == 0) {
 		handle_id = g_random_int();
-		if(janus_ice_handle_find(gateway_session, handle_id) != NULL) {
+		if(janus_ice_handle_exists(gateway_session, handle_id)) {
 			/* Handle ID already taken, try another one */
 			handle_id = 0;
 		}
@@ -255,6 +255,20 @@ janus_ice_handle *janus_ice_handle_find(void *gateway_session, guint64 handle_id
 	janus_ice_handle *handle = session->ice_handles ? g_hash_table_lookup(session->ice_handles, GUINT_TO_POINTER(handle_id)) : NULL;
 	janus_mutex_unlock(&session->mutex);
 	return handle;
+}
+
+gboolean janus_ice_handle_exists (void *gateway_session, guint64 handle_id) {
+	if (gateway_session == NULL) {
+		return FALSE;
+	}
+
+	janus_session *session = gateway_session;
+
+	janus_mutex_lock(&session->mutex);
+	janus_ice_handle *handle = session->ice_handles ? g_hash_table_lookup(session->ice_handles, GUINT_TO_POINTER(handle_id)) : NULL;
+	janus_mutex_unlock(&session->mutex);
+
+	return (handle != NULL);
 }
 
 gint janus_ice_handle_attach_plugin(void *gateway_session, guint64 handle_id, janus_plugin *plugin) {
