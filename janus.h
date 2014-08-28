@@ -110,6 +110,10 @@ typedef struct janus_websocket_client {
  * @param[in] session_id The desired Janus Gateway-Client session ID, or 0 if it needs to be generated randomly
  * @returns The created Janus Gateway-Client session if successful, NULL otherwise */
 janus_session *janus_session_create(guint64 session_id);
+/*! \brief Method to determine whether a session ID is currently in use.
+ * @param[in] session_id The Janus Gateway-Client session ID
+ * @returns Whether the ID is bound to a session */
+gboolean janus_session_exists(guint64 session_id);
 /*! \brief Method to find an existing Janus Gateway-Client session from its ID
  * @param[in] session_id The Janus Gateway-Client session ID
  * @returns The created Janus Gateway-Client session if successful, NULL otherwise */

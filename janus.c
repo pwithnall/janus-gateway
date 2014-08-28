@@ -251,7 +251,7 @@ janus_session *janus_session_create(guint64 session_id) {
 	if(session_id == 0) {
 		while(session_id == 0) {
 			session_id = g_random_int();
-			if(janus_session_find(session_id) != NULL) {
+			if(janus_session_exists(session_id)) {
 				/* Session ID already taken, try another one */
 				session_id = 0;
 			}
@@ -272,6 +272,13 @@ janus_session *janus_session_create(guint64 session_id) {
 	g_hash_table_insert(sessions, GUINT_TO_POINTER(session_id), session);
 	janus_mutex_unlock(&sessions_mutex);
 	return session;
+}
+
+gboolean janus_session_exists(guint64 session_id) {
+	janus_mutex_lock(&sessions_mutex);
+	janus_session *session = g_hash_table_lookup(sessions, GUINT_TO_POINTER(session_id));
+	janus_mutex_unlock(&sessions_mutex);
+	return (session != NULL);
 }
 
 janus_session *janus_session_find(guint64 session_id) {
@@ -741,7 +748,7 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 				goto jsondone;
 			}
 			session_id = json_integer_value(id);
-			if(session_id > 0 && janus_session_find(session_id) != NULL) {
+			if(session_id > 0 && janus_session_exists(session_id)) {
 				/* Session ID already taken */
 				ret = janus_process_error(source, session_id, transaction_text, JANUS_ERROR_SESSION_CONFLICT, "Session ID already in use");
 				goto jsondone;
