@@ -209,7 +209,14 @@ void *janus_sessions_watchdog(void *data) {
 			while (g_hash_table_iter_next(&iter, NULL, &value)) {
 				janus_session *session = value;
 
-				if(!session || session->destroy || stop) {
+				if (session == NULL) {
+					continue;
+				}
+
+				janus_mutex_lock(&session->mutex);
+
+				if (session->destroy || stop) {
+					janus_mutex_unlock(&session->mutex);
 					continue;
 				}
 
@@ -231,14 +238,19 @@ void *janus_sessions_watchdog(void *data) {
 					janus_http_event *notification = (janus_http_event *)calloc(1, sizeof(janus_http_event));
 					if(notification == NULL) {
 						JANUS_LOG(LOG_FATAL, "Memory error!\n");
+						janus_mutex_unlock(&session->mutex);
 						continue;
 					}
 					notification->code = 200;
 					notification->payload = event_text;
 					notification->allocated = 1;
+
 					g_async_queue_push(session->messages, notification);
+
 					session->timeout = 1;
 				}
+
+				janus_mutex_unlock(&session->mutex);
 			}
 		}
 		janus_mutex_unlock(&sessions_mutex);
@@ -332,7 +344,11 @@ gint janus_session_destroy(guint64 session_id) {
 	janus_session *session = janus_session_find(session_id);
 	if(session == NULL)
 		return -1;
+
 	JANUS_LOG(LOG_INFO, "Destroying session %"SCNu64"\n", session_id);
+
+	janus_mutex_lock(&session->mutex);
+
 	session->destroy = 1;
 	if (session->ice_handles != NULL) {
 		GHashTableIter iter;
@@ -867,8 +883,11 @@ int janus_process_incoming_request(janus_request_source *source, json_t *root) {
 			goto jsondone;
 		}
 	}
+
 	/* Update the last activity timer */
+	janus_mutex_lock(&session->mutex);
 	session->last_activity = janus_get_monotonic_time();
+	janus_mutex_unlock(&session->mutex);
 
 	/* What is this? */
 	if(!strcasecmp(message_text, "keepalive")) {
