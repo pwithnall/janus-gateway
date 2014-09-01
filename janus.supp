@@ -240,3 +240,81 @@
 	fun:janus_sdp_init
 	fun:main
 }
+
+{
+	glib-c-locale-conflict
+	drd:ConflictingAccess
+	fun:get_C_locale
+}
+
+# FIXME: Check whether this is legit.
+{
+	glib-private-set-conflict
+	drd:ConflictingAccess
+	fun:g_private_set
+	fun:g_thread_proxy
+}
+
+# FIXME: Temporary
+{
+	libmicrohttpd-fcntl-conflict
+	drd:ConflictingAccess
+	fun:fcntl
+	...
+	fun:start_thread
+}
+
+# FIXME: Temporary
+{
+	libmicrohttpd-recv-conflict
+	drd:ConflictingAccess
+	fun:recv
+	...
+	fun:MHD_connection_handle_read
+	...
+	fun:start_thread
+}
+
+# FIXME: Temporary
+{
+	libmicrohttpd-send-conflict
+	drd:ConflictingAccess
+	fun:send
+	...
+	fun:MHD_connection_handle_write
+	...
+	fun:start_thread
+}
+
+# FIXME: Check this one
+{
+	glib-dbus-socket-conflict
+	drd:ConflictingAccess
+	fun:fcntl
+	...
+	fun:g_socket_constructed
+	...
+	fun:g_dbus_address_try_connect_one
+}
+
+# FIXME: Check this one
+{
+	glib-dbus-socket-connect-conflict
+	drd:ConflictingAccess
+	fun:connect
+	...
+	fun:g_socket_connect
+	...
+	fun:g_dbus_address_try_connect_one
+}
+
+# FIXME: Check this one
+{
+	glib-dbus-auth-conflict
+	drd:ConflictingAccess
+	fun:sendmsg
+	...
+	fun:g_socket_send_message
+	...
+	fun:_g_dbus_auth_run_client
+}
